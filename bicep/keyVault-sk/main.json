@@ -1,0 +1,302 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "adminPrincipalId": {
+      "type": "string"
+    },
+    "applicationPrincipalId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "uniqueSuffix": {
+      "type": "string",
+      "defaultValue": "[uniqueString(subscription().displayName, parameters('rgName'))]"
+    },
+    "rgLocation": {
+      "type": "string",
+      "defaultValue": "westus",
+      "allowedValues": [
+        "westus",
+        "westus2",
+        "eastus",
+        "eastus2"
+      ]
+    },
+    "rgName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 90,
+      "defaultValue": "rg-shrd-mgmt"
+    },
+    "logAnalyticsName": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 63,
+      "defaultValue": "[take(concat('la-shrd-mgmt-', parameters('uniqueSuffix')), 63)]"
+    },
+    "keyValutName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 24,
+      "defaultValue": "[take(concat('kv-shrd-mgmt-', parameters('uniqueSuffix')), 24)]"
+    },
+    "keyValutDiagName": {
+      "type": "string",
+      "defaultValue": "diag-kv-shrd-mgmt"
+    }
+  },
+  "functions": [],
+  "variables": {
+    "defaultTags": {
+      "brought_to_you_by": "management"
+    },
+    "readerDefinitionId": "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+    "logAnalyticsContributorDefinitionId": "92aaf0da-9dab-42b6-94a3-d43ce8d16293",
+    "rgScope": "[createObject()]",
+    "keyvaultAccessPolicies": "[concat(variables('groupAccessPolicies'), variables('applicationAccessPolicies'))]",
+    "groupAccessPolicies": "[if(empty(parameters('adminPrincipalId')), createArray(), createArray(createObject('objectId', parameters('adminPrincipalId'), 'tenantId', subscription().tenantId, 'permissions', createObject('keys', createArray('get', 'list', 'update', 'create', 'import', 'delete', 'recover', 'backup', 'restore')))))]",
+    "applicationAccessPolicies": "[if(empty(parameters('applicationPrincipalId')), createArray(), createArray(createObject('objectId', parameters('applicationPrincipalId'), 'tenantId', subscription().tenantId, 'permissions', createObject('keys', createArray('get', 'list', 'unwrapKey', 'wrapKey')))))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2020-04-01-preview",
+      "name": "[guid(parameters('adminPrincipalId'), variables('readerDefinitionId'), subscription().id)]",
+      "properties": {
+        "principalType": "Group",
+        "principalId": "[parameters('adminPrincipalId')]",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('readerDefinitionId'))]"
+      }
+    },
+    {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2020-06-01",
+      "name": "[parameters('rgName')]",
+      "location": "[parameters('rgLocation')]",
+      "tags": "[variables('defaultTags')]"
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2019-10-01",
+      "name": "configureRg",
+      "resourceGroup": "[parameters('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "principalId": {
+            "value": "[parameters('adminPrincipalId')]"
+          },
+          "roleDefinitionId": {
+            "value": "[variables('logAnalyticsContributorDefinitionId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "principalId": {
+              "type": "string"
+            },
+            "roleDefinitionId": {
+              "type": "string"
+            }
+          },
+          "functions": [],
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/locks",
+              "apiVersion": "2016-09-01",
+              "name": "DontDelete",
+              "properties": {
+                "level": "CanNotDelete",
+                "notes": "Prevent deletion of the resourceGroup"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2020-04-01-preview",
+              "name": "[guid(parameters('principalId'), parameters('roleDefinitionId'), resourceGroup().id)]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('roleDefinitionId'))]",
+                "principalId": "[parameters('principalId')]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('rgName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2019-10-01",
+      "name": "logAnalytics",
+      "resourceGroup": "[parameters('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "logAnalyticsName": {
+            "value": "[parameters('logAnalyticsName')]"
+          },
+          "tags": {
+            "value": "[variables('defaultTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "logAnalyticsName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "functions": [],
+          "resources": [
+            {
+              "type": "Microsoft.OperationalInsights/workspaces",
+              "apiVersion": "2020-10-01",
+              "name": "[parameters('logAnalyticsName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "sku": {
+                  "name": "Standard"
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "logAnalyticsWorkspaceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('rgName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2019-10-01",
+      "name": "keyvalut",
+      "resourceGroup": "[parameters('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "keyVaultName": {
+            "value": "[parameters('keyValutName')]"
+          },
+          "tags": {
+            "value": "[variables('defaultTags')]"
+          },
+          "logAnalyticsWorkspaceId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics'), '2019-10-01').outputs.logAnalyticsWorkspaceId.value]"
+          },
+          "diagSettingsName": {
+            "value": "[parameters('keyValutDiagName')]"
+          },
+          "accessPolicies": {
+            "value": "[variables('keyvaultAccessPolicies')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "keyVaultName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            },
+            "accessPolicies": {
+              "type": "array",
+              "defaultValue": []
+            },
+            "diagSettingsName": {
+              "type": "string",
+              "defaultValue": "Save to LogAnalytics"
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string"
+            }
+          },
+          "functions": [],
+          "resources": [
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2019-09-01",
+              "name": "[parameters('keyVaultName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "tenantId": "[subscription().tenantId]",
+                "sku": {
+                  "family": "A",
+                  "name": "standard"
+                },
+                "enableSoftDelete": true,
+                "enablePurgeProtection": true,
+                "accessPolicies": "[parameters('accessPolicies')]"
+              }
+            },
+            {
+              "type": "microsoft.insights/diagnosticSettings",
+              "apiVersion": "2017-05-01-preview",
+              "scope": "[format('Microsoft.KeyVault/vaults/{0}', parameters('keyVaultName'))]",
+              "name": "[parameters('diagSettingsName')]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsWorkspaceId')]",
+                "logs": [
+                  {
+                    "enabled": true,
+                    "category": "AuditEvent"
+                  }
+                ],
+                "metrics": [
+                  {
+                    "enabled": true,
+                    "category": "AllMetrics"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]"
+              ]
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('rgName')), 'Microsoft.Resources/deployments', 'logAnalytics')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', parameters('rgName'))]"
+      ]
+    }
+  ]
+}
